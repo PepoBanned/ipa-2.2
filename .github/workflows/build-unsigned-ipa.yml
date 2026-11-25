@@ -26,4 +26,44 @@ jobs:
         continue-on-error: true
         run: bash Tests/run_policy_tests.sh
 
-      - name:
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project ThreeOneOSSix.xcodeproj -scheme 3106 \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Mostrar errores de compilación
+        if: failure()
+        run: |
+          echo "=== ERRORES ==="
+          grep -E "error:|\*\* BUILD FAILED" "$RUNNER_TEMP/build.log" | head -40 || true
+
+      - name: Package unsigned IPA
+        run: |
+          PRODUCTS="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos"
+          APP=$(find "$PRODUCTS" -maxdepth 1 -iname "*.app" | head -1)
+          if [[ -z "$APP" ]]; then
+            echo "FAIL: no .app found under $PRODUCTS" >&2
+            exit 1
+          fi
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist")
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry "XternalB-${VERSION}-unsigned.ipa" Payload
+          shasum -a 256 "XternalB-${VERSION}-unsigned.ipa"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: XternalB-unsigned-ipa
+          path: "XternalB-*-unsigned.ipa"
+
+      - name: Upload build log (si falla)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
